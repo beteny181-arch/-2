@@ -183,7 +183,10 @@
                 <i class="fa-solid fa-scale-balanced"></i> 3. تحليل وتطور المصروفات
             </button>
             <button class="tab-btn" onclick="switchTab('journal')">
-                <i class="fa-solid fa-book-journal-whills"></i> 4. سجل القيود اليومي (599)
+                <i class="fa-solid fa-book-journal-whills"></i> 4. سجل القيود اليومي
+            </button>
+            <button class="tab-btn" onclick="switchTab('salesItems')">
+                <i class="fa-solid fa-boxes-stacked"></i> 5. مبيعات الأصناف
             </button>
         </div>
 
@@ -408,6 +411,35 @@
                     <tbody id="journalTableBody"></tbody>
                 </table>
             </div>
+            </div>
+        </div>
+
+        <!-- TAB 5: Sales Items (مبيعات الأصناف) -->
+        <div class="section-card" id="tabSalesItems" style="display: none;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <h2><i class="fa-solid fa-boxes-stacked" style="color: var(--accent-warning);"></i> 📦 تحليل مبيعات الأصناف والمنتجات</h2>
+            </div>
+            <div class="filter-box">
+                <input type="text" class="filter-input" id="searchSalesInput" placeholder="🔍 ابحث باسم الصنف أو الكود..." oninput="filterSalesTable()" style="flex: 1;">
+            </div>
+            <div id="salesSummaryCards" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap:16px; margin-bottom:20px;"></div>
+            <div class="table-responsive" style="max-height: 600px;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>الكود</th>
+                            <th>اسم الصنف</th>
+                            <th>الوحدة</th>
+                            <th>ك. صافى</th>
+                            <th>سعر صافى (ج.م)</th>
+                            <th>تكلفة البيع (ج.م)</th>
+                            <th>الربح (ج.م)</th>
+                            <th>نسبة الربح %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="salesItemsTableBody"></tbody>
+                </table>
+            </div>
         </div>
 
     </div>
@@ -424,6 +456,7 @@
         let pnlRowsOriginal = [];
         let ccRowsOriginal = [];
         let expRowsOriginal = [];
+        let salesRowsOriginal = [];
 
         function formatMoney(num) {
             if (num === null || num === undefined || isNaN(num)) return "0 ج.م";
@@ -498,58 +531,76 @@
 
         function handleFileUpload(file) {
             if (!file) return;
-            showToast("⏳ جاري قراءة وتحديث بيانات الشيت المرفوع...");
-            
+
+            // Show loading state
+            document.getElementById('uploadStatus').innerHTML = `
+                <div style="background:rgba(59,130,246,0.15); border:1px solid var(--accent-primary); padding:14px; border-radius:8px; margin-top:10px; text-align:center;">
+                    <div style="font-size:1.4rem; margin-bottom:6px;">⏳</div>
+                    <strong style="color:var(--accent-primary);">جاري رفع ومعالجة الشيت بواسطة Python...</strong><br>
+                    <small style="color:var(--text-muted);">يقوم السيرفر الآن بقراءة كل بيانات "${file.name}" وإعادة بناء التقرير بالكامل</small>
+                </div>
+            `;
+            showToast("⏳ جاري رفع ومعالجة الشيت...");
+
             const reader = new FileReader();
             reader.onload = function(e) {
-                try {
-                    const data = new Uint8Array(e.target.result);
-                    const workbook = XLSX.read(data, { type: 'array' });
-                    
-                    const newSheetData = {};
-                    workbook.SheetNames.forEach(name => {
-                        newSheetData[name] = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 });
-                    });
+                const data = new Uint8Array(e.target.result);
 
-                    sheetData = newSheetData;
+                fetch('http://localhost:8083/upload_excel', {
+                    method: 'POST',
+                    headers: { 'Content-Length': data.length },
+                    body: data
+                })
+                .then(res => res.json())
+                .then(result => {
+                    if (result.status === 'success') {
+                        const sheetsText = Object.entries(result.sheets || {})
+                            .map(([name, count]) => `${name}: ${count} صف`)
+                            .join(' | ');
 
+                        document.getElementById('uploadStatus').innerHTML = `
+                            <div style="background:rgba(16,185,129,0.15); border:1px solid var(--accent-success); padding:14px; border-radius:8px; margin-top:10px;">
+                                <div style="font-size:1.4rem; margin-bottom:6px; text-align:center;">✅</div>
+                                <strong style="color:#34d399; font-size:1rem;">تم تحديث جميع البيانات بنجاح من الملف: ${file.name}</strong><br>
+                                <small style="color:var(--text-muted); display:block; margin-top:6px;">${sheetsText}</small>
+                                <div style="margin-top:12px; text-align:center;">
+                                    <button onclick="location.reload()" style="background:var(--accent-success); color:white; border:none; padding:8px 24px; border-radius:8px; font-family:Cairo,sans-serif; font-size:0.95rem; font-weight:700; cursor:pointer;">
+                                        🔄 تحديث الصفحة لعرض البيانات الجديدة
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                        showToast("🎉 تم المعالجة بنجاح! اضغط تحديث الصفحة لرؤية البيانات الجديدة");
+                    } else {
+                        throw new Error(result.message || 'فشل التحديث');
+                    }
+                })
+                .catch(err => {
+                    // Fallback: process in browser with XLSX.js
                     try {
-                        localStorage.setItem('el_sahaba_current_data', JSON.stringify(sheetData));
-                    } catch(err) {}
+                        const workbook = XLSX.read(data, { type: 'array' });
+                        const newSheetData = {};
+                        workbook.SheetNames.forEach(name => {
+                            newSheetData[name] = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 });
+                        });
+                        sheetData = newSheetData;
+                        try { localStorage.setItem('el_sahaba_current_data', JSON.stringify(sheetData)); } catch(e) {}
 
-                    document.getElementById('uploadStatus').innerHTML = `
-                        <div style="background: rgba(16, 185, 129, 0.2); border: 1px solid var(--accent-success); padding: 12px; border-radius: 8px; margin-top: 10px;">
-                            <strong style="font-size: 1rem; color: #34d399;">✅ تم تحديث جميع الرسوم البيانية والجداول بنجاح من الملف: ${file.name}</strong><br>
-                            <small style="color: var(--text-muted);">عدد الشيتات المقروءة: ${workbook.SheetNames.length} (${workbook.SheetNames.join(' | ')})</small>
-                        </div>
-                    `;
-                    showToast("🎉 تم تحديث جميع القوائم والرسوم البيانية بالأرقام الجديدة!");
-                    
-                    initPnL();
-                    initCostCenters();
-                    initExpAnalysis();
-                    initJournal();
-
-                    // Send uploaded bytes to server API to persist on disk and update Desktop ZIP
-                    fetch('/upload_excel', {
-                        method: 'POST',
-                        body: data
-                    }).then(res => res.json()).then(resData => {
-                        console.log("Server sync response:", resData);
-                        showToast("📦 تم حفظ التحديث وإعادة تجميع ملف ZIP على سطح المكتب لـ GitHub!");
-                    }).catch(err => {
-                        console.log("Server API sync skipped:", err);
-                    });
-
-                } catch (err) {
-                    console.error("Error reading file:", err);
-                    alert("⚠️ تعذر قراءة الملف! يرجى رفع ملف إكسيل بصيغة .xlsx متاح.");
-                }
+                        document.getElementById('uploadStatus').innerHTML = `
+                            <div style="background:rgba(245,158,11,0.15); border:1px solid var(--accent-warning); padding:14px; border-radius:8px; margin-top:10px;">
+                                <strong style="color:var(--accent-warning);">⚠️ تم التحديث في المتصفح فقط (السيرفر غير متاح)</strong><br>
+                                <small style="color:var(--text-muted);">الملف: ${file.name} | الشيتات: ${workbook.SheetNames.join(' | ')}</small>
+                            </div>
+                        `;
+                        showToast("✅ تم تحديث البيانات في المتصفح!");
+                        initPnL(); initCostCenters(); initExpAnalysis(); initJournal(); initSalesItems();
+                    } catch(e2) {
+                        alert("⚠️ تعذر قراءة الملف: " + e2.message);
+                    }
+                });
             };
             reader.readAsArrayBuffer(file);
-            try {
-                document.getElementById('excelUploader').value = '';
-            } catch(e) {}
+            try { document.getElementById('excelUploader').value = ''; } catch(e) {}
         }
 
         function switchTab(tabId) {
@@ -569,6 +620,9 @@
             } else if (tabId === 'journal') {
                 document.querySelectorAll('.tab-btn')[3].classList.add('active');
                 document.getElementById('tabJournal').style.display = 'block';
+            } else if (tabId === 'salesItems') {
+                document.querySelectorAll('.tab-btn')[4].classList.add('active');
+                document.getElementById('tabSalesItems').style.display = 'block';
             }
         }
 
@@ -930,11 +984,74 @@
             XLSX.writeFile(wb, "تقرير_نفقات_شركة_الحاج_جمعة_السحابة.xlsx");
         }
 
+        // Initialize Sales Items Tab
+        function initSalesItems() {
+            const sheetName = Object.keys(sheetData).find(s => s.includes('مبيعات') || s.includes('الاصناف') || s.includes('أصناف'));
+            if (!sheetName) return;
+            const rows = sheetData[sheetName];
+            if (!rows || rows.length < 2) return;
+
+            salesRowsOriginal = rows.slice(1).filter(r => r && r[1] && String(r[1]).trim() && !String(r[1]).includes('اجمالى'));
+
+            let totalRevenue = 0, totalCost = 0, totalProfit = 0;
+            salesRowsOriginal.forEach(r => {
+                totalRevenue += parseFloat(r[8]) || 0;
+                totalCost += parseFloat(r[9]) || 0;
+                totalProfit += parseFloat(r[10]) || 0;
+            });
+
+            const cards = [
+                { label: 'عدد الأصناف', value: salesRowsOriginal.length + ' صنف', icon: '📦', color: '#3b82f6' },
+                { label: 'إجمالي الإيرادات', value: formatMoney(totalRevenue), icon: '💵', color: '#06b6d4' },
+                { label: 'إجمالي التكلفة', value: formatMoney(totalCost), icon: '💸', color: '#ef4444' },
+                { label: 'إجمالي الربح', value: formatMoney(totalProfit), icon: '📈', color: totalProfit >= 0 ? '#10b981' : '#f59e0b' },
+            ];
+            document.getElementById('salesSummaryCards').innerHTML = cards.map(c =>
+                '<div style="background:var(--bg-dark); border:1px solid var(--border-color); border-radius:12px; padding:18px; display:flex; align-items:center; gap:14px;">' +
+                '<div style="font-size:2rem;">' + c.icon + '</div>' +
+                '<div><div style="font-size:0.8rem; color:var(--text-muted);">' + c.label + '</div>' +
+                '<div style="font-size:1.2rem; font-weight:800; color:' + c.color + ';">' + c.value + '</div></div></div>'
+            ).join('');
+
+            filterSalesTable();
+        }
+
+        function filterSalesTable() {
+            const query = ((document.getElementById('searchSalesInput') || {}).value || '').trim().toLowerCase();
+            let html = '';
+            salesRowsOriginal.forEach(r => {
+                if (!r || !r[1]) return;
+                const name = String(r[1]).trim();
+                const code = String(r[0] || '').trim();
+                if (query && !name.toLowerCase().includes(query) && !code.toLowerCase().includes(query)) return;
+
+                const netQty = parseFloat(r[7]) || 0;
+                const netPrice = parseFloat(r[8]) || 0;
+                const costPrice = parseFloat(r[9]) || 0;
+                const profit = parseFloat(r[10]) || 0;
+                const margin = netPrice !== 0 ? ((profit / netPrice) * 100).toFixed(1) : '0.0';
+                const profitColor = profit >= 0 ? 'var(--accent-success)' : '#ef4444';
+
+                html += '<tr>' +
+                    '<td style="font-size:0.8rem; color:var(--text-muted);">' + code + '</td>' +
+                    '<td><strong>' + name + '</strong></td>' +
+                    '<td>' + (r[2] || '-') + '</td>' +
+                    '<td>' + netQty.toLocaleString('ar-EG') + '</td>' +
+                    '<td>' + formatMoney(netPrice) + '</td>' +
+                    '<td>' + formatMoney(costPrice) + '</td>' +
+                    '<td style="color:' + profitColor + '; font-weight:700;">' + formatMoney(profit) + '</td>' +
+                    '<td><span class="badge ' + (profit >= 0 ? 'badge-success' : 'badge-danger') + '">' + margin + '%</span></td>' +
+                    '</tr>';
+            });
+            document.getElementById('salesItemsTableBody').innerHTML = html || '<tr><td colspan="8" style="text-align:center; color:var(--text-muted);">لا توجد بيانات</td></tr>';
+        }
+
         window.addEventListener('DOMContentLoaded', () => {
             initPnL();
             initCostCenters();
             initExpAnalysis();
             initJournal();
+            initSalesItems();
         });
     </script>
 </body>
