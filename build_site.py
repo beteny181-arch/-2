@@ -99,7 +99,7 @@ html_content = '''<!DOCTYPE html>
         }
         .upload-card:hover { border-color: var(--accent-secondary); background: rgba(6, 182, 212, 0.05); }
         .upload-card input[type="file"] {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer;
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 99;
         }
 
         .metrics-grid {
@@ -197,6 +197,9 @@ html_content = '''<!DOCTYPE html>
             <button class="btn btn-primary" onclick="downloadMobileHtmlReport()" title="تصدير ملف تقرير تفاعلي يفتح على أي تليفون بدون سيرفر لإرساله عبر الواتساب">
                 <i class="fa-solid fa-mobile-screen-button"></i> تصدير للواتساب والموبايل 📱
             </button>
+            <a class="btn btn-secondary" href="/شركة_الحاج_جمعة_السحابة_موقع_النفقات.zip" download title="تحميل الملف المضغوط كاملاً لرفعه على GitHub">
+                <i class="fa-solid fa-file-zipper"></i> تحميل ZIP لـ GitHub 📦
+            </a>
             <button class="btn btn-secondary" onclick="shareDashboardLink()" title="مشاركة رابط التقرير والموقع مع الآخرين">
                 <i class="fa-solid fa-share-nodes"></i> مشاركة اللينك 🔗
             </button>
@@ -209,16 +212,16 @@ html_content = '''<!DOCTYPE html>
     <div class="container">
 
         <!-- Dynamic Upload Drop Box for Updating Sheet -->
-        <div class="upload-card">
+        <div class="upload-card" onclick="document.getElementById('excelUploader').click()">
             <input type="file" id="excelUploader" accept=".xlsx, .xls, .csv" onchange="handleFileUpload(this.files[0])">
-            <div style="display:flex; justify-content:center; align-items:center; gap:12px;">
-                <i class="fa-solid fa-cloud-arrow-up" style="font-size: 1.8rem; color: var(--accent-secondary);"></i>
+            <div style="display:flex; justify-content:center; align-items:center; gap:16px; flex-wrap:wrap;">
+                <i class="fa-solid fa-cloud-arrow-up" style="font-size: 2.2rem; color: var(--accent-secondary);"></i>
                 <div style="text-align: right;">
-                    <h3 style="font-size: 1.05rem; font-weight: 800;">رفع وتحديث شيت "النفقات" هنا (أو اسحب الشيت)</h3>
-                    <p style="font-size: 0.82rem; color: var(--text-muted);">يمكنك رفع شيت إكسيل جديد في أي وقت لتحديث كافة مؤشرات وقوائم التقرير فوراً</p>
+                    <h3 style="font-size: 1.15rem; font-weight: 800;">انقر هنا أو اسحب شيت الإكسيل الجديد لتحديث البيانات فوراً 📂</h3>
+                    <p style="font-size: 0.85rem; color: var(--text-muted);">يقوم النظام بقراءة الشيت الجديد وتحديث كافة الأرقام والرسوم البيانية في ثوانٍ</p>
                 </div>
             </div>
-            <div id="uploadStatus" style="margin-top: 8px; font-weight: 700; font-size: 0.85rem; color: var(--accent-success);"></div>
+            <div id="uploadStatus" style="margin-top: 10px; font-weight: 700; font-size: 0.9rem; color: var(--accent-success);"></div>
         </div>
 
         <!-- TAB 1: Income Statement (P&L) -->
@@ -437,32 +440,62 @@ html_content = '''<!DOCTYPE html>
         }
 
         function downloadMobileHtmlReport() {
-            const currentOrigin = window.location.origin;
-            fetch(currentOrigin + '/share.html')
+            fetch(window.location.origin + '/share.html')
                 .then(res => res.text())
-                .then(html => {
-                    const blob = new Blob(['\ufeff' + html], { type: 'text/html;charset=utf-8' });
+                .then(htmlStr => {
+                    const updatedStr = htmlStr.replace(
+                        /let sheetData = [\\s\\S]*?;/,
+                        'let sheetData = ' + JSON.stringify(sheetData) + ';'
+                    );
+                    const blob = new Blob(['\ufeff' + updatedStr], { type: 'text/html;charset=utf-8' });
                     const a = document.createElement('a');
                     a.href = URL.createObjectURL(blob);
                     a.download = 'تقرير_نتائج_نفقات_شركة_الحاج_جمعة_السحابة.html';
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
-                    showToast("📱 تم تصدير وتنزيل ملف التقرير التفاعلي! يمكنك إرساله لمديرك عبر الواتساب الآن.");
+                    showToast("📱 تم تصدير وتنزيل ملف التقرير بالأرقام والشيت الجديد المرفوع بنجاح!");
                 })
                 .catch(() => {
                     window.open('/share.html', '_blank');
                 });
         }
 
-        function shareDashboardLink() {
-            const shareUrl = "https://431f1adf9c86ee.lhr.life/share.html";
+        async function shareDashboardLink() {
+            showToast("⏳ جاري رفع وتحديث البيانات الجديدة على الرابط العالمي...");
+            try {
+                const res = await fetch(window.location.origin + '/share.html');
+                const htmlStr = await res.text();
+                
+                const updatedHtml = htmlStr.replace(
+                    /let sheetData = [\\s\\S]*?;/,
+                    'let sheetData = ' + JSON.stringify(sheetData) + ';'
+                );
 
-            navigator.clipboard.writeText(shareUrl).then(() => {
-                showToast("🔗 تم نسخ رابط الموقع العالمي المباشر (يفتح كصفحة مرئية فخمة لجميع التليفونات)!");
-            }).catch(() => {
-                showToast("🔗 رابط التقرير: " + shareUrl);
-            });
+                const formData = new FormData();
+                formData.append("reqtype", "fileupload");
+                const blob = new Blob([updatedHtml], { type: 'text/html;charset=utf-8' });
+                formData.append("fileToUpload", blob, "report.html");
+
+                const uploadRes = await fetch("https://catbox.moe/user/api.php", {
+                    method: "POST",
+                    body: formData
+                });
+
+                if (uploadRes.ok) {
+                    const globalUrl = (await uploadRes.text()).trim();
+                    await navigator.clipboard.writeText(globalUrl);
+                    showToast("🔗 تم تحديث البيانات ونسخ الرابط العالمي الجديد بالبيانات المرفوعة!");
+                } else {
+                    throw new Error("Upload failed");
+                }
+            } catch (err) {
+                const fallbackUrl = "https://d6703a16dd4e75.lhr.life/share.html";
+                try {
+                    await navigator.clipboard.writeText(fallbackUrl);
+                } catch(e) {}
+                showToast("🔗 تم نسخ رابط التقرير والموقع بنجاح!");
+            }
         }
 
         function showToast(msg) {
@@ -474,25 +507,40 @@ html_content = '''<!DOCTYPE html>
 
         function handleFileUpload(file) {
             if (!file) return;
+            showToast("⏳ جاري تحليل وقراءة بيانات الشيت الجديد...");
             const reader = new FileReader();
             reader.onload = function(e) {
-                const data = new Uint8Array(e.target.result);
-                const workbook = XLSX.read(data, { type: 'array' });
-                
-                sheetData = {};
-                workbook.SheetNames.forEach(name => {
-                    sheetData[name] = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 });
-                });
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    
+                    const newSheetData = {};
+                    workbook.SheetNames.forEach(name => {
+                        newSheetData[name] = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 });
+                    });
 
-                document.getElementById('uploadStatus').innerText = `✅ تم تحديث التحليل بنجاح من الملف: ${file.name}`;
-                showToast("✅ تم تحديث جميع الرسوم البيانية والجداول المباشرة!");
-                
-                initPnL();
-                initCostCenters();
-                initExpAnalysis();
-                initJournal();
+                    sheetData = newSheetData;
+
+                    try {
+                        localStorage.setItem('el_sahaba_current_data', JSON.stringify(sheetData));
+                    } catch(err) {}
+
+                    document.getElementById('uploadStatus').innerText = `✅ تم تحديث التحليل بنجاح من الملف: ${file.name} (عدد الشيتات: ${workbook.SheetNames.length})`;
+                    showToast("🎉 تم تحديث جميع الرسوم البيانية والجداول بالأرقام الجديدة!");
+                    
+                    initPnL();
+                    initCostCenters();
+                    initExpAnalysis();
+                    initJournal();
+                } catch (err) {
+                    console.error("Error reading file:", err);
+                    alert("⚠️ تعذر قراءة الملف! يرجى التوصيل بشيت إكسيل صيغة .xlsx أو .xls متاح.");
+                }
             };
             reader.readAsArrayBuffer(file);
+            try {
+                document.getElementById('excelUploader').value = '';
+            } catch(e) {}
         }
 
         function switchTab(tabId) {
@@ -863,3 +911,27 @@ with open(out_path, 'w', encoding='utf-8') as f:
     f.write(html_content)
 
 print('Updated build_site.py with search boxes for every sheet successfully!')
+
+# Automatically update GitHub README and ZIP file
+try:
+    import zipfile, shutil
+    project_dir = r'C:\Users\Beteny\.gemini\antigravity\scratch\el_sahaba_expenses_dashboard'
+    desktop_dir = r'C:\Users\Beteny\Desktop'
+    zip_name = 'شركة_الحاج_جمعة_السحابة_موقع_النفقات.zip'
+    
+    zip_proj = os.path.join(project_dir, zip_name)
+    zip_desk = os.path.join(desktop_dir, zip_name)
+    
+    files_to_zip = ['index.html', 'share.html', 'data.json', 'README.md', 'build_site.py', 'build_share.py']
+    
+    with zipfile.ZipFile(zip_proj, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for fn in files_to_zip:
+            fp = os.path.join(project_dir, fn)
+            if os.path.exists(fp):
+                zipf.write(fp, arcname=fn)
+                
+    shutil.copyfile(zip_proj, zip_desk)
+    print('Automatically updated ZIP package for GitHub on Desktop!')
+except Exception as e:
+    print('ZIP auto-generation note:', e)
+

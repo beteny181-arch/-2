@@ -381,6 +381,12 @@ html_content = '''<!DOCTYPE html>
 
     <script>
         let sheetData = ''' + json.dumps(raw_data, ensure_ascii=False) + ''';
+        try {
+            const savedData = localStorage.getItem('el_sahaba_current_data');
+            if (savedData) {
+                sheetData = JSON.parse(savedData);
+            }
+        } catch(e) {}
         let charts = {};
         let pnlRowsOriginal = [];
         let ccRowsOriginal = [];
