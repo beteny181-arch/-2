@@ -286,12 +286,9 @@ html_content = '''<!DOCTYPE html>
             <div class="table-responsive">
                 <table id="pnlTable">
                     <thead>
-                        <tr>
+                        <tr id="pnlTableHead">
                             <th>البيان المحاسبي</th>
-                            <th>مارس (Mar)</th>
-                            <th>أبريل (Apr)</th>
-                            <th>مايو (May)</th>
-                            <th>يونيو (June)</th>
+                            <!-- Headers inserted dynamically by JS -->
                             <th>إجمالي الفترة (ج.م)</th>
                         </tr>
                     </thead>
@@ -507,7 +504,8 @@ html_content = '''<!DOCTYPE html>
 
         function handleFileUpload(file) {
             if (!file) return;
-            showToast("⏳ جاري تحليل وقراءة بيانات الشيت الجديد...");
+            showToast("⏳ جاري قراءة وتحديث بيانات الشيت المرفوع...");
+            
             const reader = new FileReader();
             reader.onload = function(e) {
                 try {
@@ -525,16 +523,33 @@ html_content = '''<!DOCTYPE html>
                         localStorage.setItem('el_sahaba_current_data', JSON.stringify(sheetData));
                     } catch(err) {}
 
-                    document.getElementById('uploadStatus').innerText = `✅ تم تحديث التحليل بنجاح من الملف: ${file.name} (عدد الشيتات: ${workbook.SheetNames.length})`;
-                    showToast("🎉 تم تحديث جميع الرسوم البيانية والجداول بالأرقام الجديدة!");
+                    document.getElementById('uploadStatus').innerHTML = `
+                        <div style="background: rgba(16, 185, 129, 0.2); border: 1px solid var(--accent-success); padding: 12px; border-radius: 8px; margin-top: 10px;">
+                            <strong style="font-size: 1rem; color: #34d399;">✅ تم تحديث جميع الرسوم البيانية والجداول بنجاح من الملف: ${file.name}</strong><br>
+                            <small style="color: var(--text-muted);">عدد الشيتات المقروءة: ${workbook.SheetNames.length} (${workbook.SheetNames.join(' | ')})</small>
+                        </div>
+                    `;
+                    showToast("🎉 تم تحديث جميع القوائم والرسوم البيانية بالأرقام الجديدة!");
                     
                     initPnL();
                     initCostCenters();
                     initExpAnalysis();
                     initJournal();
+
+                    // Send uploaded bytes to server API to persist on disk and update Desktop ZIP
+                    fetch('/upload_excel', {
+                        method: 'POST',
+                        body: data
+                    }).then(res => res.json()).then(resData => {
+                        console.log("Server sync response:", resData);
+                        showToast("📦 تم حفظ التحديث وإعادة تجميع ملف ZIP على سطح المكتب لـ GitHub!");
+                    }).catch(err => {
+                        console.log("Server API sync skipped:", err);
+                    });
+
                 } catch (err) {
                     console.error("Error reading file:", err);
-                    alert("⚠️ تعذر قراءة الملف! يرجى التوصيل بشيت إكسيل صيغة .xlsx أو .xls متاح.");
+                    alert("⚠️ تعذر قراءة الملف! يرجى رفع ملف إكسيل بصيغة .xlsx متاح.");
                 }
             };
             reader.readAsArrayBuffer(file);
@@ -563,54 +578,79 @@ html_content = '''<!DOCTYPE html>
             }
         }
 
-        // Initialize P&L Data
+        // Initialize P&L Data - Supports dynamic columns (Mar, Apr, May, June, July + ...)
         function initPnL() {
             let sheetName = Object.keys(sheetData).find(s => s.includes('قائمة') || s.includes('الدخل')) || Object.keys(sheetData)[1];
             const rows = sheetData[sheetName];
             if (!rows || rows.length < 2) return;
 
-            let totalSales = 0, totalCogs = 0, totalNetSales = 0, totalNetProfit = 0;
-            let marSales = 0, aprSales = 0, maySales = 0, juneSales = 0;
-            let marCogs = 0, aprCogs = 0, mayCogs = 0, juneCogs = 0;
+            // Read headers dynamically from row 0
+            const headers = (rows[0] || []).map(h => h ? String(h) : '');
+            // Month columns start at index 1 (skip البيان)
+            const monthCols = headers.slice(1).filter(h => h && h.trim());
+            const numMonths = monthCols.length;
+
+            let totalSales = 0, totalCogs = 0, totalGrossMargin = 0, totalNetProfit = 0;
+            const salesByMonth = new Array(numMonths).fill(0);
+            const cogsByMonth = new Array(numMonths).fill(0);
 
             pnlRowsOriginal = rows.slice(1);
 
             pnlRowsOriginal.forEach(r => {
                 if (!r || !r[0]) return;
-                const name = String(r[0]);
-                const mar = parseFloat(r[1]) || 0;
-                const apr = parseFloat(r[2]) || 0;
-                const may = parseFloat(r[3]) || 0;
-                const june = parseFloat(r[4]) || 0;
-                const rowTotal = mar + apr + may + june;
+                const name = String(r[0]).trim();
+                const monthVals = monthCols.map((_, i) => parseFloat(r[i + 1]) || 0);
+                const rowTotal = monthVals.reduce((a, b) => a + b, 0);
 
-                if (name.includes('اجمالى مبيعات') || name.includes('مبيعات')) {
-                    if (totalSales === 0) { totalSales = rowTotal; marSales = mar; aprSales = apr; maySales = may; juneSales = june; }
-                } else if (name.includes('تكلفة البضاعه')) {
-                    totalCogs = rowTotal; marCogs = mar; aprCogs = apr; mayCogs = may; juneCogs = june;
-                } else if (name.includes('صافى المبيعات')) {
-                    totalNetSales = rowTotal;
-                } else if (name.includes('صافى ربح') || name.includes('ربح/خساره') || name.includes('خساره')) {
+                if (name.includes('اجمالى مبيعات') || name.includes('إجمالى مبيعات')) {
+                    if (totalSales === 0) {
+                        totalSales = rowTotal;
+                        monthVals.forEach((v, i) => salesByMonth[i] = v);
+                    }
+                } else if (name.includes('تكلفة البضاعه') || name.includes('تكلفة البضاعة')) {
+                    totalCogs = rowTotal;
+                    monthVals.forEach((v, i) => cogsByMonth[i] = v);
+                } else if (name.includes('هامش الربح') || name.includes('مجمل الربح')) {
+                    totalGrossMargin = rowTotal;
+                } else if (name.includes('صافى ربح') || name.includes('ربح/خساره') || name.includes('خساره') || name.includes('صافي ربح')) {
                     totalNetProfit = rowTotal;
                 }
             });
 
+            // Auto-calculate gross margin if not found
+            if (totalGrossMargin === 0) totalGrossMargin = totalSales - totalCogs;
+            // Auto-calculate net profit if not found
+            if (totalNetProfit === 0) totalNetProfit = totalGrossMargin;
+
             document.getElementById('kpiTotalSales').innerText = formatMoney(totalSales);
             document.getElementById('kpiTotalCogs').innerText = formatMoney(totalCogs);
-            document.getElementById('kpiGrossMargin').innerText = formatMoney(totalNetSales);
+            document.getElementById('kpiGrossMargin').innerText = formatMoney(totalGrossMargin);
             document.getElementById('kpiNetProfitLoss').innerText = formatMoney(totalNetProfit);
 
             filterPnlTable();
+
+            const monthLabels = monthCols.map(m => {
+                const map = {Mar:'مارس',Apr:'أبريل',may:'مايو',june:'يونيو',july:'يوليو',Aug:'أغسطس',Sep:'سبتمبر',Oct:'أكتوبر',Nov:'نوفمبر',Dec:'ديسمبر',Jan:'يناير',Feb:'فبراير'};
+                return map[m] || m;
+            });
+
+            // Dynamically set table headers based on actual month columns
+            const pnlHead = document.getElementById('pnlTableHead');
+            if (pnlHead) {
+                pnlHead.innerHTML = '<th>البيان المحاسبي</th>' +
+                    monthLabels.map(m => `<th>${m}</th>`).join('') +
+                    '<th style="color:var(--accent-success);">إجمالي الفترة (ج.م)</th>';
+            }
 
             if (charts.pnlBar) charts.pnlBar.destroy();
             const ctxBar = document.getElementById('pnlBarChart').getContext('2d');
             charts.pnlBar = new Chart(ctxBar, {
                 type: 'bar',
                 data: {
-                    labels: ['مارس (Mar)', 'أبريل (Apr)', 'مايو (May)', 'يونيو (June)'],
+                    labels: monthLabels,
                     datasets: [
-                        { label: 'إجمالي المبيعات', data: [marSales, aprSales, maySales, juneSales], backgroundColor: '#3b82f6', borderRadius: 6 },
-                        { label: 'تكلفة البضاعة (COGS)', data: [marCogs, aprCogs, mayCogs, juneCogs], backgroundColor: '#ef4444', borderRadius: 6 }
+                        { label: 'إجمالي المبيعات', data: salesByMonth, backgroundColor: '#3b82f6', borderRadius: 6 },
+                        { label: 'تكلفة البضاعة (COGS)', data: cogsByMonth, backgroundColor: '#ef4444', borderRadius: 6 }
                     ]
                 },
                 options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#94a3b8' } } } }
@@ -621,39 +661,40 @@ html_content = '''<!DOCTYPE html>
             charts.pnlPie = new Chart(ctxPie, {
                 type: 'doughnut',
                 data: {
-                    labels: ['مارس', 'أبريل', 'مايو', 'يونيو'],
-                    datasets: [{ data: [marSales, aprSales, maySales, juneSales], backgroundColor: ['#3b82f6', '#8b5cf6', '#06b6d4', '#10b981'] }]
+                    labels: monthLabels,
+                    datasets: [{ data: salesByMonth, backgroundColor: ['#3b82f6','#8b5cf6','#06b6d4','#10b981','#f59e0b','#ef4444'] }]
                 },
                 options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8' } } } }
             });
         }
 
-        // Live Search for TAB 1 (P&L)
+        // Live Search for TAB 1 (P&L) - Dynamic columns
         function filterPnlTable() {
             const query = (document.getElementById('searchPnlInput').value || '').trim().toLowerCase();
             let html = '';
             let count = 0;
 
+            // Get headers dynamically
+            const sheetName = Object.keys(sheetData).find(s => s.includes('قائمة') || s.includes('الدخل')) || Object.keys(sheetData)[1];
+            const headers = sheetData[sheetName] && sheetData[sheetName][0] ? sheetData[sheetName][0].map(h => h ? String(h) : '') : [];
+            const monthCols = headers.slice(1).filter(h => h && h.trim());
+            const monthMap = {Mar:'مارس',Apr:'أبريل',may:'مايو',june:'يونيو',july:'يوليو',Aug:'أغسطس',Sep:'سبتمبر',Oct:'أكتوبر',Nov:'نوفمبر',Dec:'ديسمبر',Jan:'يناير',Feb:'فبراير'};
+
             pnlRowsOriginal.forEach(r => {
                 if (!r || !r[0]) return;
-                const name = String(r[0]);
+                const name = String(r[0]).trim();
                 if (query && !name.toLowerCase().includes(query)) return;
 
                 count++;
-                const mar = parseFloat(r[1]) || 0;
-                const apr = parseFloat(r[2]) || 0;
-                const may = parseFloat(r[3]) || 0;
-                const june = parseFloat(r[4]) || 0;
-                const rowTotal = mar + apr + may + june;
+                const monthVals = monthCols.map((_, i) => parseFloat(r[i + 1]) || 0);
+                const rowTotal = monthVals.reduce((a, b) => a + b, 0);
 
-                const isHighlight = (name.includes('اجمالى') || name.includes('صافى') || name.includes('تكلفة البضاعه'));
+                const isHighlight = (name.includes('اجمالى') || name.includes('صافى') || name.includes('تكلفة'));
+                const monthCells = monthVals.map(v => `<td>${formatMoney(v)}</td>`).join('');
                 html += `
                     <tr style="${isHighlight ? 'background: rgba(59,130,246,0.12); font-weight:800;' : ''}">
                         <td><strong>${name}</strong></td>
-                        <td>${formatMoney(mar)}</td>
-                        <td>${formatMoney(apr)}</td>
-                        <td>${formatMoney(may)}</td>
-                        <td>${formatMoney(june)}</td>
+                        ${monthCells}
                         <td><strong style="color:var(--accent-success);">${formatMoney(rowTotal)}</strong></td>
                     </tr>
                 `;
